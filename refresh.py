@@ -20,6 +20,20 @@ LEVER_RE = re.compile(r"https?://jobs\.lever\.co/([a-zA-Z0-9\-_]+)/([0-9a-f\-]{3
 
 MAX_CANDIDATES_PER_TITLE = 10
 
+FILLER_WORDS = {"of", "the", "a", "an"}
+
+
+def _normalize_title(title):
+    title = title.lower()
+    title = re.sub(r"\bsite reliability engineering\b", "sre", title)
+    title = re.sub(r"[,&()\-–]", " ", title)
+    return [w for w in title.split() if w and w not in FILLER_WORDS]
+
+
+def _title_matches(fetched_title, target_titles):
+    fetched_words = _normalize_title(fetched_title)
+    return any(fetched_words == _normalize_title(t) for t in target_titles)
+
 
 def load_config():
     if not CONFIG_PATH.exists():
@@ -80,19 +94,31 @@ def _extract_salary_from_text(text):
     return m.group(0) if m else None
 
 
+def _detect_workplace_type(location_name):
+    text = location_name.lower()
+    if "hybrid" in text:
+        return "hybrid"
+    if "remote" in text:
+        return "remote"
+    return "onsite"
+
+
 def _fetch_greenhouse(company, job_id):
     status, data = _http_get_json(GREENHOUSE_API.format(company=company, job_id=job_id))
     if status != 200 or not data:
         return None
     content = re.sub(r"<[^>]+>", " ", data.get("content", ""))
     salary = _extract_salary_from_text(content)
-    notes = f"Salary published: {salary}" if salary else "No salary range published"
+    location_name = (data.get("location") or {}).get("name", "")
+    workplace = _detect_workplace_type(location_name)
+    notes = f"{workplace.capitalize()} — " + (f"Salary published: {salary}" if salary else "No salary range published")
     return {
         "title": data.get("title", "").strip(),
         "company": data.get("company_name", company),
-        "location": (data.get("location") or {}).get("name", ""),
+        "location": location_name,
         "url": data.get("absolute_url", f"https://job-boards.greenhouse.io/{company}/jobs/{job_id}"),
         "source": "greenhouse",
+        "workplace_type": workplace,
         "notes": notes,
     }
 
@@ -103,12 +129,9 @@ def _fetch_lever(company, job_id):
         return None
     categories = data.get("categories", {})
     commitment = categories.get("commitment", "")
-    workplace = data.get("workplaceType", "")
+    workplace = data.get("workplaceType", "") or _detect_workplace_type(categories.get("location", ""))
     salary_range = data.get("salaryRange")
-    if salary_range:
-        notes = f"Salary published: {salary_range}"
-    else:
-        notes = "No salary range published"
+    notes = f"Salary published: {salary_range}" if salary_range else "No salary range published"
     parts = [p for p in [commitment, workplace] if p]
     if parts:
         notes = ", ".join(parts) + " — " + notes
@@ -118,6 +141,7 @@ def _fetch_lever(company, job_id):
         "location": categories.get("location", ""),
         "url": data.get("hostedUrl", f"https://jobs.lever.co/{company}/{job_id}"),
         "source": "lever",
+        "workplace_type": workplace,
         "notes": notes,
     }
 
@@ -128,10 +152,13 @@ def run_refresh():
     if not api_key or api_key == "PASTE_YOUR_SERPER_API_KEY_HERE":
         return {"error": "No Serper API key configured. Add one to config.json."}
 
+    exclude_onsite = config.get("exclude_onsite", True)
     titles = jt.load_titles()
     checked = 0
     added = 0
     dead = 0
+    title_mismatch = 0
+    onsite_skipped = 0
     errors = []
 
     conn = jt.get_db()
@@ -148,6 +175,12 @@ def run_refresh():
             if job is None:
                 dead += 1
                 continue
+            if not _title_matches(job["title"], titles):
+                title_mismatch += 1
+                continue
+            if exclude_onsite and job["workplace_type"] == "onsite":
+                onsite_skipped += 1
+                continue
             try:
                 conn.execute(
                     "INSERT INTO jobs (title, company, location, url, source, date_found, status, notes) "
@@ -162,7 +195,14 @@ def run_refresh():
     conn.commit()
     conn.close()
 
-    return {"checked": checked, "added": added, "dead_skipped": dead, "errors": errors}
+    return {
+        "checked": checked,
+        "added": added,
+        "dead_skipped": dead,
+        "title_mismatch_skipped": title_mismatch,
+        "onsite_skipped": onsite_skipped,
+        "errors": errors,
+    }
 
 
 if __name__ == "__main__":

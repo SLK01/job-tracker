@@ -270,10 +270,14 @@ async function loadJobs() {
     const delTd = document.createElement('td');
     const delBtn = document.createElement('button');
     delBtn.textContent = '×';
-    delBtn.title = 'Remove';
+    delBtn.title = 'Reject — hides this job and keeps it from reappearing on refresh';
     delBtn.style.cssText = 'border:none;background:none;color:var(--muted);cursor:pointer;font-size:16px;';
     delBtn.onclick = async () => {
-      await api(`/api/jobs/${job.id}`, { method: 'DELETE' });
+      await api(`/api/jobs/${job.id}/status`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'rejected' })
+      });
       loadJobs();
     };
     delTd.appendChild(delBtn);
@@ -311,7 +315,7 @@ document.getElementById('refreshBtn').onclick = async () => {
       status.textContent = result.error;
       status.style.color = '#dc2626';
     } else {
-      status.textContent = `Checked ${result.checked}, added ${result.added} new, ${result.dead_skipped} no longer open.`;
+      status.textContent = `Checked ${result.checked}, added ${result.added} new, ${result.dead_skipped} closed, ${result.title_mismatch_skipped} title mismatch, ${result.onsite_skipped} on-site skipped.`;
       status.style.color = 'var(--muted)';
       loadJobs();
     }

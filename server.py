@@ -54,6 +54,8 @@ class Handler(BaseHTTPRequestHandler):
             if "status" in qs:
                 query += " AND status = ?"
                 params.append(qs["status"][0])
+            else:
+                query += " AND status != 'rejected'"
             query += " ORDER BY date_found DESC, id DESC"
             rows = conn.execute(query, params).fetchall()
             conn.close()
