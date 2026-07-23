@@ -1,12 +1,25 @@
 #!/usr/bin/env python3
 import json
 import re
+import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlsplit, parse_qs, unquote
 
 import job_tracker as jt
 import refresh as rf
+
+AUTO_REFRESH_CHECK_SECONDS = 300
+
+
+def _auto_refresh_loop():
+    while True:
+        try:
+            rf.run_refresh_if_due()
+        except Exception as e:
+            print(f"Auto-refresh check failed: {e}")
+        time.sleep(AUTO_REFRESH_CHECK_SECONDS)
 
 ROOT = Path(__file__).parent
 INDEX_HTML = ROOT / "index.html"
@@ -75,6 +88,10 @@ class Handler(BaseHTTPRequestHandler):
 
         if parsed.path == "/api/criteria":
             self._send_json(jt.load_criteria())
+            return
+
+        if parsed.path == "/api/refresh-status":
+            self._send_json(rf.refresh_status())
             return
 
         if parsed.path == "/api/statuses":
@@ -155,6 +172,7 @@ class Handler(BaseHTTPRequestHandler):
 
 if __name__ == "__main__":
     jt.get_db().close()
+    threading.Thread(target=_auto_refresh_loop, daemon=True).start()
     server = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
     print(f"Job tracker running at http://127.0.0.1:{PORT}")
     server.serve_forever()

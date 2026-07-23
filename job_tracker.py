@@ -33,7 +33,23 @@ def get_db():
         conn.execute("ALTER TABLE jobs ADD COLUMN workplace_type TEXT")
     if "country" not in existing_cols:
         conn.execute("ALTER TABLE jobs ADD COLUMN country TEXT")
+    conn.execute("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)")
     return conn
+
+
+def get_meta(key, default=None):
+    conn = get_db()
+    row = conn.execute("SELECT value FROM meta WHERE key = ?", (key,)).fetchone()
+    conn.close()
+    return row[0] if row else default
+
+
+def set_meta(key, value):
+    conn = get_db()
+    conn.execute("INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                 (key, value))
+    conn.commit()
+    conn.close()
 
 
 def load_criteria():

@@ -3,7 +3,7 @@ import re
 import urllib.request
 import urllib.error
 from pathlib import Path
-from datetime import date
+from datetime import date, datetime, timedelta
 
 import job_tracker as jt
 
@@ -237,6 +237,8 @@ def run_refresh():
     conn.commit()
     conn.close()
 
+    jt.set_meta("last_refresh_at", datetime.utcnow().isoformat())
+
     return {
         "checked": checked,
         "added": added,
@@ -245,6 +247,26 @@ def run_refresh():
         "title_mismatch_skipped": title_mismatch,
         "errors": errors,
     }
+
+
+def refresh_status():
+    config = load_config()
+    frequency_hours = config.get("refresh_frequency_hours", 24)
+    last_refresh_at = jt.get_meta("last_refresh_at")
+    due = True
+    if last_refresh_at:
+        elapsed = datetime.utcnow() - datetime.fromisoformat(last_refresh_at)
+        due = elapsed >= timedelta(hours=frequency_hours)
+    return {
+        "last_refresh_at": last_refresh_at,
+        "refresh_frequency_hours": frequency_hours,
+        "due": due,
+    }
+
+
+def run_refresh_if_due():
+    if refresh_status()["due"]:
+        run_refresh()
 
 
 if __name__ == "__main__":
