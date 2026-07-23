@@ -1,6 +1,6 @@
 config.json
 jobs.db
-titles.json
+criteria.json
 import.json
 __pycache__/
 *.pyc

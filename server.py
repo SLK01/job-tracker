@@ -14,7 +14,8 @@ PORT = 8787
 
 JOB_STATUS_RE = re.compile(r"^/api/jobs/(\d+)/status$")
 JOB_ID_RE = re.compile(r"^/api/jobs/(\d+)$")
-TITLE_RE = re.compile(r"^/api/titles/(.+)$")
+CRITERIA_KIND_RE = re.compile(r"^/api/criteria/(domains|levels)$")
+CRITERIA_TERM_RE = re.compile(r"^/api/criteria/(domains|levels)/(.+)$")
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -49,25 +50,31 @@ class Handler(BaseHTTPRequestHandler):
         if parsed.path == "/api/jobs":
             qs = parse_qs(parsed.query)
             conn = jt.get_db()
-            query = "SELECT id, title, company, location, url, source, status, date_found, notes FROM jobs WHERE 1=1"
+            query = ("SELECT id, title, company, location, url, source, status, date_found, notes, workplace_type, country "
+                     "FROM jobs WHERE 1=1")
             params = []
             if "status" in qs:
                 query += " AND status = ?"
                 params.append(qs["status"][0])
             else:
                 query += " AND status != 'rejected'"
+            place = qs.get("place", ["all"])[0]
+            if place in ("remote", "hybrid", "onsite"):
+                query += " AND workplace_type = ?"
+                params.append(place)
+            if qs.get("country", ["all"])[0] == "us":
+                query += " AND country = 'US'"
             query += " ORDER BY date_found DESC, id DESC"
             rows = conn.execute(query, params).fetchall()
             conn.close()
-            jobs = [
-                dict(zip(["id", "title", "company", "location", "url", "source", "status", "date_found", "notes"], r))
-                for r in rows
-            ]
+            cols = ["id", "title", "company", "location", "url", "source", "status", "date_found", "notes",
+                    "workplace_type", "country"]
+            jobs = [dict(zip(cols, r)) for r in rows]
             self._send_json(jobs)
             return
 
-        if parsed.path == "/api/titles":
-            self._send_json(jt.load_titles())
+        if parsed.path == "/api/criteria":
+            self._send_json(jt.load_criteria())
             return
 
         if parsed.path == "/api/statuses":
@@ -102,17 +109,20 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(result)
             return
 
-        if parsed.path == "/api/titles":
+        m = CRITERIA_KIND_RE.match(parsed.path)
+        if m:
+            kind = m.group(1)
             data = self._read_json()
-            title = (data.get("title") or "").strip()
-            if not title:
-                self._send_json({"error": "title required"}, 400)
+            term = (data.get("term") or "").strip()
+            if not term:
+                self._send_json({"error": "term required"}, 400)
                 return
-            titles = jt.load_titles()
-            if title not in titles:
-                titles.append(title)
-                jt.save_titles(titles)
-            self._send_json({"ok": True, "titles": titles})
+            criteria = jt.load_criteria()
+            terms = criteria.setdefault(kind, [])
+            if term not in terms:
+                terms.append(term)
+                jt.save_criteria(criteria)
+            self._send_json({"ok": True, "criteria": criteria})
             return
 
         self._send_json({"error": "not found"}, 404)
@@ -130,14 +140,15 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json({"ok": cur.rowcount > 0})
             return
 
-        m = TITLE_RE.match(parsed.path)
+        m = CRITERIA_TERM_RE.match(parsed.path)
         if m:
-            title = unquote(m.group(1))
-            titles = jt.load_titles()
-            if title in titles:
-                titles.remove(title)
-                jt.save_titles(titles)
-            self._send_json({"ok": True, "titles": titles})
+            kind, term = m.group(1), unquote(m.group(2))
+            criteria = jt.load_criteria()
+            terms = criteria.setdefault(kind, [])
+            if term in terms:
+                terms.remove(term)
+                jt.save_criteria(criteria)
+            self._send_json({"ok": True, "criteria": criteria})
             return
         self._send_json({"error": "not found"}, 404)
 

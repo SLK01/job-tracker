@@ -7,9 +7,10 @@ from datetime import date
 
 ROOT = Path(__file__).parent
 DB_PATH = ROOT / "jobs.db"
-TITLES_PATH = ROOT / "titles.json"
+CRITERIA_PATH = ROOT / "criteria.json"
 
 STATUSES = ["new", "interested", "applied", "interviewing", "rejected", "offer"]
+CRITERIA_KINDS = ["domains", "levels"]
 
 
 def get_db():
@@ -27,46 +28,55 @@ def get_db():
             notes TEXT
         )
     """)
+    existing_cols = {row[1] for row in conn.execute("PRAGMA table_info(jobs)")}
+    if "workplace_type" not in existing_cols:
+        conn.execute("ALTER TABLE jobs ADD COLUMN workplace_type TEXT")
+    if "country" not in existing_cols:
+        conn.execute("ALTER TABLE jobs ADD COLUMN country TEXT")
     return conn
 
 
-def load_titles():
-    if not TITLES_PATH.exists():
-        return []
-    return json.loads(TITLES_PATH.read_text())
+def load_criteria():
+    if not CRITERIA_PATH.exists():
+        return {"domains": [], "levels": []}
+    data = json.loads(CRITERIA_PATH.read_text())
+    return {"domains": data.get("domains", []), "levels": data.get("levels", [])}
 
 
-def save_titles(titles):
-    TITLES_PATH.write_text(json.dumps(titles, indent=2))
+def save_criteria(criteria):
+    CRITERIA_PATH.write_text(json.dumps(criteria, indent=2))
 
 
-def cmd_titles_list(args):
-    titles = load_titles()
-    if not titles:
-        print("No titles configured.")
+def cmd_criteria_list(args):
+    criteria = load_criteria()
+    terms = criteria.get(args.kind, [])
+    if not terms:
+        print(f"No {args.kind} configured.")
         return
-    for t in titles:
+    for t in terms:
         print(f"- {t}")
 
 
-def cmd_titles_add(args):
-    titles = load_titles()
-    if args.title in titles:
-        print(f"Already tracking: {args.title}")
+def cmd_criteria_add(args):
+    criteria = load_criteria()
+    terms = criteria.setdefault(args.kind, [])
+    if args.term in terms:
+        print(f"Already tracking: {args.term}")
         return
-    titles.append(args.title)
-    save_titles(titles)
-    print(f"Added: {args.title}")
+    terms.append(args.term)
+    save_criteria(criteria)
+    print(f"Added to {args.kind}: {args.term}")
 
 
-def cmd_titles_remove(args):
-    titles = load_titles()
-    if args.title not in titles:
-        print(f"Not found: {args.title}")
+def cmd_criteria_remove(args):
+    criteria = load_criteria()
+    terms = criteria.setdefault(args.kind, [])
+    if args.term not in terms:
+        print(f"Not found in {args.kind}: {args.term}")
         return
-    titles.remove(args.title)
-    save_titles(titles)
-    print(f"Removed: {args.title}")
+    terms.remove(args.term)
+    save_criteria(criteria)
+    print(f"Removed from {args.kind}: {args.term}")
 
 
 def cmd_add(args):
@@ -163,15 +173,17 @@ def main():
     parser = argparse.ArgumentParser(description="Track open leadership eng jobs by title.")
     sub = parser.add_subparsers(dest="cmd", required=True)
 
-    t = sub.add_parser("titles", help="manage target job titles")
-    tsub = t.add_subparsers(dest="tcmd", required=True)
-    tsub.add_parser("list").set_defaults(func=cmd_titles_list)
-    ta = tsub.add_parser("add")
-    ta.add_argument("title")
-    ta.set_defaults(func=cmd_titles_add)
-    tr = tsub.add_parser("remove")
-    tr.add_argument("title")
-    tr.set_defaults(func=cmd_titles_remove)
+    for kind in CRITERIA_KINDS:
+        c = sub.add_parser(kind, help=f"manage tracked {kind}")
+        csub = c.add_subparsers(dest=f"{kind}_cmd", required=True)
+        cl = csub.add_parser("list")
+        cl.set_defaults(func=cmd_criteria_list, kind=kind)
+        ca = csub.add_parser("add")
+        ca.add_argument("term")
+        ca.set_defaults(func=cmd_criteria_add, kind=kind)
+        cr = csub.add_parser("remove")
+        cr.add_argument("term")
+        cr.set_defaults(func=cmd_criteria_remove, kind=kind)
 
     a = sub.add_parser("add", help="manually add a job")
     a.add_argument("--title", required=True)

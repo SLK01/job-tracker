@@ -117,11 +117,20 @@
   <div class="sub">Leadership eng roles — click a status to move a job, click Apply to open the posting.</div>
 
   <div class="card">
-    <h2>Target Titles</h2>
-    <div class="titles-list" id="titlesList"></div>
+    <h2>Domain — a job matches only if its title contains a Domain term AND a Level term</h2>
+    <div class="titles-list" id="domainsList"></div>
     <div class="add-title-row">
-      <input type="text" id="newTitleInput" placeholder="e.g. SVP Engineering">
-      <button class="primary" id="addTitleBtn">Add title</button>
+      <input type="text" id="newDomainInput" placeholder="e.g. Technology">
+      <button class="primary" id="addDomainBtn">Add domain</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Level</h2>
+    <div class="titles-list" id="levelsList"></div>
+    <div class="add-title-row">
+      <input type="text" id="newLevelInput" placeholder="e.g. Senior Director">
+      <button class="primary" id="addLevelBtn">Add level</button>
     </div>
   </div>
 
@@ -129,6 +138,19 @@
     <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:12px;">
       <h2 style="margin:0;">Jobs</h2>
       <div style="display:flex; align-items:center; gap:10px;">
+        <label style="font-size:12px; color:var(--muted);">Place:
+          <select id="placeSelect" class="status-select">
+            <option value="all">All</option>
+            <option value="remote">Remote</option>
+            <option value="hybrid">Hybrid</option>
+          </select>
+        </label>
+        <label style="font-size:12px; color:var(--muted);">Location:
+          <select id="countrySelect" class="status-select">
+            <option value="all">All</option>
+            <option value="us">US only</option>
+          </select>
+        </label>
         <span id="refreshStatus" style="font-size:12px; color:var(--muted);"></span>
         <button class="primary" id="refreshBtn">Refresh listings</button>
       </div>
@@ -182,21 +204,26 @@ async function loadStatuses() {
   });
 }
 
-async function loadTitles() {
-  const titles = await api('/api/titles');
-  const list = document.getElementById('titlesList');
+async function loadCriteria() {
+  const criteria = await api('/api/criteria');
+  renderCriteriaList('domains', criteria.domains || [], 'domainsList');
+  renderCriteriaList('levels', criteria.levels || [], 'levelsList');
+}
+
+function renderCriteriaList(kind, terms, listId) {
+  const list = document.getElementById(listId);
   list.innerHTML = '';
-  if (titles.length === 0) {
-    list.innerHTML = '<span style="color:var(--muted); font-size:13px;">No titles yet.</span>';
+  if (terms.length === 0) {
+    list.innerHTML = '<span style="color:var(--muted); font-size:13px;">None configured.</span>';
   }
-  titles.forEach(t => {
+  terms.forEach(t => {
     const chip = document.createElement('div');
     chip.className = 'title-chip';
     chip.innerHTML = `<span></span><button title="Remove">&times;</button>`;
     chip.querySelector('span').textContent = t;
     chip.querySelector('button').onclick = async () => {
-      await api('/api/titles/' + encodeURIComponent(t), { method: 'DELETE' });
-      loadTitles();
+      await api(`/api/criteria/${kind}/` + encodeURIComponent(t), { method: 'DELETE' });
+      loadCriteria();
     };
     list.appendChild(chip);
   });
@@ -204,7 +231,13 @@ async function loadTitles() {
 
 async function loadJobs() {
   await loadStatuses();
-  const url = currentFilter ? `/api/jobs?status=${encodeURIComponent(currentFilter)}` : '/api/jobs';
+  const params = new URLSearchParams();
+  if (currentFilter) params.set('status', currentFilter);
+  const place = document.getElementById('placeSelect').value;
+  if (place && place !== 'all') params.set('place', place);
+  const country = document.getElementById('countrySelect').value;
+  if (country && country !== 'all') params.set('country', country);
+  const url = '/api/jobs' + (params.toString() ? '?' + params.toString() : '');
   const jobs = await api(url);
   const body = document.getElementById('jobsBody');
   const empty = document.getElementById('emptyMsg');
@@ -215,9 +248,11 @@ async function loadJobs() {
     const tr = document.createElement('tr');
 
     const roleTd = document.createElement('td');
+    const placeLabel = job.workplace_type ? ` · ${job.workplace_type}` : '';
+    const countryLabel = job.country ? ` · ${job.country}` : '';
     roleTd.innerHTML = `<div class="job-title"></div><div class="company"></div>`;
     roleTd.querySelector('.job-title').textContent = job.title;
-    roleTd.querySelector('.company').textContent = `${job.company}${job.location ? ' — ' + job.location : ''}`;
+    roleTd.querySelector('.company').textContent = `${job.company}${job.location ? ' — ' + job.location : ''}${placeLabel}${countryLabel}`;
     tr.appendChild(roleTd);
 
     const notesTd = document.createElement('td');
@@ -287,21 +322,29 @@ async function loadJobs() {
   });
 }
 
-document.getElementById('addTitleBtn').onclick = async () => {
-  const input = document.getElementById('newTitleInput');
-  const title = input.value.trim();
-  if (!title) return;
-  await api('/api/titles', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ title })
+function wireCriteriaAdd(kind, inputId, buttonId) {
+  const btn = document.getElementById(buttonId);
+  const input = document.getElementById(inputId);
+  btn.onclick = async () => {
+    const term = input.value.trim();
+    if (!term) return;
+    await api(`/api/criteria/${kind}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ term })
+    });
+    input.value = '';
+    loadCriteria();
+  };
+  input.addEventListener('keydown', e => {
+    if (e.key === 'Enter') btn.click();
   });
-  input.value = '';
-  loadTitles();
-};
-document.getElementById('newTitleInput').addEventListener('keydown', e => {
-  if (e.key === 'Enter') document.getElementById('addTitleBtn').click();
-});
+}
+wireCriteriaAdd('domains', 'newDomainInput', 'addDomainBtn');
+wireCriteriaAdd('levels', 'newLevelInput', 'addLevelBtn');
+
+document.getElementById('placeSelect').onchange = loadJobs;
+document.getElementById('countrySelect').onchange = loadJobs;
 
 document.getElementById('refreshBtn').onclick = async () => {
   const btn = document.getElementById('refreshBtn');
@@ -315,7 +358,7 @@ document.getElementById('refreshBtn').onclick = async () => {
       status.textContent = result.error;
       status.style.color = '#dc2626';
     } else {
-      status.textContent = `Checked ${result.checked}, added ${result.added} new, ${result.dead_skipped} closed, ${result.title_mismatch_skipped} title mismatch, ${result.onsite_skipped} on-site skipped.`;
+      status.textContent = `Checked ${result.checked}, added ${result.added} new, updated ${result.updated}, ${result.dead_skipped} closed, ${result.title_mismatch_skipped} title mismatch.`;
       status.style.color = 'var(--muted)';
       loadJobs();
     }
@@ -328,7 +371,7 @@ document.getElementById('refreshBtn').onclick = async () => {
   }
 };
 
-loadTitles();
+loadCriteria();
 loadJobs();
 </script>
 </body>
